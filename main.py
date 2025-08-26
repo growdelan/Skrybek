@@ -17,11 +17,21 @@ from scipy.io import wavfile
 
 # --- Konfiguracja/placeholder ---
 USER_PROMPT = f"""
-Jesteś formatorem polskiego tekstu z dyktatu. Zasady: popraw interpunkcję i wielkie litery.
-Jeśli treść zawiera elementy listy, sformatuj je czytelnie – używaj myślników (- ).
-Nie dodawaj pozdrowień, podsumowań ani komentarzy. Nie zmieniaj sensu.
-Zachowaj oryginalne słownictwo użytkownika. Zdania zaczynają się wielką literą; na końcu kropka.
-Listy: myślniki (- ), wiersz po wierszu; jeśli podano numerację, zachowaj ją.
+Jesteś Formatorem polskiego tekstu z dyktatu.
+
+Twoje zadania:
+- Poprawiaj interpunkcję, wielkie litery i składnię.
+- Każde zdanie zaczynaj wielką literą, kończ kropką.
+- Jeśli tekst zawiera wyliczenia, instrukcje, kroki, przykłady lub elementy porządkowe:
+  - Przerób je na listę punktowaną (- ) lub numerowaną (1., 2., 3.), zależnie od kontekstu.
+  - Każdy punkt listy w osobnym wierszu.
+- Dziel dłuższy tekst na akapity dla lepszej czytelności.
+- Usuwaj powtórzenia wynikające z dyktatu (np. "yyy", "eee", "no no").
+- Zachowaj oryginalne słownictwo użytkownika, nie zmieniaj sensu.
+- Nie dodawaj komentarzy, podsumowań ani pozdrowień.
+- Styl tekstu ma być prosty, klarowny i naturalny.
+
+Cel: przejrzysty, poprawny językowo tekst w formie gotowej do czytania lub publikacji.
 """
 DEFAULT_OUTPUT_WAV = "recording.wav"
 
@@ -85,13 +95,19 @@ def record_until_silence(
                     silent_accum += dur
 
                 if started and silent_accum >= silence_seconds:
-                    vprint(verbose, f"[rec] detected {silence_seconds:.2f}s silence -> stopping")
+                    vprint(
+                        verbose,
+                        f"[rec] detected {silence_seconds:.2f}s silence -> stopping",
+                    )
                     break
 
                 now = time.time()
                 if verbose and now - last_print > 1.0:
                     total_dur = sum(c.shape[0] for c in collected) / rate
-                    print(f"[rec] dur={total_dur:.1f}s, rms={rms:.4f}, silent_accum={silent_accum:.2f}s", flush=True)
+                    print(
+                        f"[rec] dur={total_dur:.1f}s, rms={rms:.4f}, silent_accum={silent_accum:.2f}s",
+                        flush=True,
+                    )
                     last_print = now
     except Exception as e:
         print(f"[rec][ERR] {e}", file=sys.stderr)
@@ -108,7 +124,9 @@ def record_until_silence(
 
 
 # --- Zapis WAV (PCM16, mono, 16 kHz) ---
-def save_wav_pcm16(path: str, rate: int, audio_f32_mono: np.ndarray, verbose: bool = False) -> None:
+def save_wav_pcm16(
+    path: str, rate: int, audio_f32_mono: np.ndarray, verbose: bool = False
+) -> None:
     if audio_f32_mono.ndim != 1:
         audio_f32_mono = audio_f32_mono.reshape(-1)
     audio_i16 = np.clip(audio_f32_mono, -1.0, 1.0)
@@ -132,7 +150,10 @@ def transcribe_with_mlx_whisper(
     if whisper_model:
         kwargs["path_or_hf_repo"] = whisper_model
 
-    vprint(verbose, f"[whisper] transcribing {wav_path} with model={whisper_model or 'default'} …")
+    vprint(
+        verbose,
+        f"[whisper] transcribing {wav_path} with model={whisper_model or 'default'} …",
+    )
     out = mlx_whisper.transcribe(wav_path, **kwargs)
     text = (out.get("text") or "").strip()
     if not text:
@@ -157,6 +178,7 @@ def process_with_gemma(
     """
     from mlx_vlm import load, generate
     from mlx_vlm.prompt_utils import apply_chat_template
+
     try:
         from mlx_vlm.utils import load_config
     except Exception:
@@ -172,9 +194,13 @@ def process_with_gemma(
 
     base_prompt = (user_prompt_text or USER_PROMPT or "").strip()
     if base_prompt == "" or base_prompt == "<WSTAW_SWÓJ_PROMPT_TUTAJ>":
-        base_prompt = "Przetwórz transkrypcję: streść najważniejsze punkty zwięźle i po polsku."
+        base_prompt = (
+            "Przetwórz transkrypcję: streść najważniejsze punkty zwięźle i po polsku."
+        )
 
-    prompt = f"{base_prompt}\n\n---\nTRANSKRYPCJA (kontekst użytkownika):\n{transcript}\n"
+    prompt = (
+        f"{base_prompt}\n\n---\nTRANSKRYPCJA (kontekst użytkownika):\n{transcript}\n"
+    )
 
     formatted = apply_chat_template(processor, config, prompt, num_images=0)
 
@@ -206,6 +232,7 @@ def process_with_gemma(
 def copy_to_clipboard(text: str, verbose: bool = False) -> bool:
     try:
         import pyperclip
+
         pyperclip.copy(text)
         vprint(verbose, "[clip] copied via pyperclip")
         return True
@@ -230,14 +257,38 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description="Record -> Transcribe (mlx-whisper) -> (optional) Process (Gemma-3 via mlx_vlm) -> Print + Clipboard"
     )
-    ap.add_argument("--use-gemma", action="store_true",
-                    help="If set, post-process transcript with Gemma via mlx_vlm; otherwise output raw transcript.")
-    ap.add_argument("--rate", type=int, default=16000, help="Sample rate (Hz), default 16000")
-    ap.add_argument("--silence-threshold", type=float, default=0.01, help="RMS threshold for silence (0..1), default 0.01")
-    ap.add_argument("--silence-seconds", type=float, default=3.0, help="Continuous silence to stop (s), default 3.0")
-    ap.add_argument("--device", type=str, default=None, help="Optional sounddevice input device id/name")
-    ap.add_argument("--prompt", type=str, default=None,
-                    help="User prompt for Gemma post-processing (used only with --use-gemma; overrides USER_PROMPT)")
+    ap.add_argument(
+        "--use-gemma",
+        action="store_true",
+        help="If set, post-process transcript with Gemma via mlx_vlm; otherwise output raw transcript.",
+    )
+    ap.add_argument(
+        "--rate", type=int, default=16000, help="Sample rate (Hz), default 16000"
+    )
+    ap.add_argument(
+        "--silence-threshold",
+        type=float,
+        default=0.01,
+        help="RMS threshold for silence (0..1), default 0.01",
+    )
+    ap.add_argument(
+        "--silence-seconds",
+        type=float,
+        default=3.0,
+        help="Continuous silence to stop (s), default 3.0",
+    )
+    ap.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Optional sounddevice input device id/name",
+    )
+    ap.add_argument(
+        "--prompt",
+        type=str,
+        default=None,
+        help="User prompt for Gemma post-processing (used only with --use-gemma; overrides USER_PROMPT)",
+    )
     ap.add_argument(
         "--whisper-model",
         type=str,
@@ -250,8 +301,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default="mlx-community/gemma-3-4b-it-qat-4bit",
         help="mlx_vlm model id (used only with --use-gemma)",
     )
-    ap.add_argument("--max-tokens", type=int, default=512, help="Max tokens for VLM generation")
-    ap.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature for VLM")
+    ap.add_argument(
+        "--max-tokens", type=int, default=512, help="Max tokens for VLM generation"
+    )
+    ap.add_argument(
+        "--temperature", type=float, default=0.7, help="Sampling temperature for VLM"
+    )
     ap.add_argument("--verbose", action="store_true", help="Verbose logs")
     return ap.parse_args(argv)
 
@@ -277,7 +332,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     save_wav_pcm16(DEFAULT_OUTPUT_WAV, args.rate, audio, verbose=verbose)
 
     # 3) Transcribe locally (mlx-whisper)
-    transcript = transcribe_with_mlx_whisper(DEFAULT_OUTPUT_WAV, whisper_model=args.whisper_model, verbose=verbose)
+    transcript = transcribe_with_mlx_whisper(
+        DEFAULT_OUTPUT_WAV, whisper_model=args.whisper_model, verbose=verbose
+    )
 
     # 4) (Optional) Process text with Gemma-3 via mlx_vlm
     if args.use_gemma:
