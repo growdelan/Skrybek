@@ -1,6 +1,6 @@
 # main.py
 # macOS (Apple Silicon) | Python 3.10+
-# Flow: record mic -> stop after N sec silence -> save WAV -> transcribe (mlx-whisper)
+# Flow: record mic -> stop after N sec silence OR ESC -> save WAV -> transcribe (mlx-whisper)
 # -> (optional) process with Gemma 3 via mlx_vlm -> print + copy to clipboard.
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ def vprint(verbose: bool, *args, **kwargs):
         print(*args, **kwargs, flush=True)
 
 
-# --- Nagrywanie do wykrycia ciszy ---
+# --- Nagrywanie do wykrycia ciszy lub ESC ---
 def record_until_silence(
     rate: int = 16000,
     silence_threshold: float = 0.01,
@@ -50,8 +50,9 @@ def record_until_silence(
     verbose: bool = False,
 ) -> np.ndarray:
     """
-    Nagrywa mono float32 [-1, 1] do czasu wykrycia ciągłej ciszy przez silence_seconds.
-    Cisza wykrywana po RMS chunku < silence_threshold.
+    Nagrywa mono float32 [-1, 1] do czasu:
+      - wykrycia ciągłej ciszy przez silence_seconds (RMS < silence_threshold) LUB
+      - naciśnięcia klawisza ESC w terminalu (tty).
     """
     sd.default.samplerate = rate
     sd.default.channels = 1
@@ -70,18 +71,52 @@ def record_until_silence(
             pass
         audio_q.put(indata.copy())
 
+    # Przygotuj nieblokujący odczyt klawiatury (tylko POSIX + TTY)
+    use_kb = sys.stdin.isatty()
+    kb_fd = None
+    kb_state = None
+    if use_kb:
+        try:
+            import termios, tty  # tylko na POSIX (macOS)
+
+            kb_fd = sys.stdin.fileno()
+            kb_state = termios.tcgetattr(kb_fd)
+            tty.setcbreak(kb_fd)  # nie blokuje i nie czeka na Enter
+            vprint(verbose, "[rec] Press ESC to stop recording manually.")
+        except Exception:
+            use_kb = False
+            kb_fd = None
+            kb_state = None
+
     vprint(
         verbose,
         f"[rec] start (rate={rate}, blocksize={blocksize}, threshold={silence_threshold}, silence={silence_seconds}s) …",
     )
 
     try:
+        import select  # POSIX
+
         with sd.InputStream(callback=callback, blocksize=blocksize, dtype="float32"):
             last_print = time.time()
             while True:
+                # 0) Sprawdź klawisz ESC (nieblokująco)
+                if use_kb:
+                    try:
+                        r, _, _ = select.select([sys.stdin], [], [], 0)
+                        if r:
+                            ch = sys.stdin.read(1)
+                            if ch == "\x1b":  # ESC
+                                vprint(verbose, "[rec] ESC pressed -> stopping")
+                                break
+                    except Exception:
+                        # Jeśli coś pójdzie nie tak, po prostu ignoruj klawiaturę
+                        use_kb = False
+
+                # 1) Odbierz audio (krótki timeout, żeby pętla była responsywna)
                 try:
-                    chunk = audio_q.get(timeout=0.2)
+                    chunk = audio_q.get(timeout=0.1)
                 except queue.Empty:
+                    # brak nowego audio, pętla i tak sprawdza ESC często
                     continue
 
                 collected.append(chunk)
@@ -94,6 +129,7 @@ def record_until_silence(
                 else:
                     silent_accum += dur
 
+                # 2) Warunek zatrzymania: ciągła cisza
                 if started and silent_accum >= silence_seconds:
                     vprint(
                         verbose,
@@ -101,6 +137,7 @@ def record_until_silence(
                     )
                     break
 
+                # 3) Log co ~1 s
                 now = time.time()
                 if verbose and now - last_print > 1.0:
                     total_dur = sum(c.shape[0] for c in collected) / rate
@@ -109,9 +146,20 @@ def record_until_silence(
                         flush=True,
                     )
                     last_print = now
+    except KeyboardInterrupt:
+        vprint(verbose, "[rec] Interrupted by user (Ctrl+C) -> stopping")
     except Exception as e:
         print(f"[rec][ERR] {e}", file=sys.stderr)
         sys.exit(1)
+    finally:
+        # Przywróć tryb terminala
+        if use_kb and kb_fd is not None and kb_state is not None:
+            try:
+                import termios
+
+                termios.tcsetattr(kb_fd, termios.TCSADRAIN, kb_state)
+            except Exception:
+                pass
 
     audio = (
         np.concatenate(collected, axis=0).reshape(-1)
