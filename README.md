@@ -2,7 +2,7 @@
 
 **Skrybek** to prosty, jednoplikowy workflow w Pythonie (`main.py`) dla macOS (Apple Silicon):
 1) nagrywa dźwięk z mikrofonu,
-2) automatycznie kończy po `3 s` ciszy,
+2) automatycznie kończy po `3 s` ciszy, lub naciśnięciu **ESC**,
 3) zapisuje `recording.wav` (mono, 16 kHz, PCM16),
 4) transkrybuje lokalnie przez **mlx‑whisper**,
 5) *(opcjonalnie, gdy podasz `--use-gemma`)* obrabia wynik modelem **Gemma‑3** w formacie **MLX** przez `mlx_vlm`,
