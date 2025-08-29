@@ -17,22 +17,17 @@ from scipy.io import wavfile
 
 # --- Konfiguracja/placeholder ---
 USER_PROMPT = f"""
-Jesteś Formatorem polskiego tekstu z dyktatu.
+Zadanie: Przywróć interpunkcję oraz wielkie/małe litery w polskim tekście
+z rozpoznawania mowy. NIE ZMIENIAJ SŁÓW ANI ICH KOLEJNOŚCI.
+Nie dodawaj komentarzy. Zwróć tylko sam poprawiony tekst.
 
-Twoje zadania:
-- Poprawiaj interpunkcję, wielkie litery i składnię.
-- Każde zdanie zaczynaj wielką literą, kończ kropką.
-- Jeśli tekst zawiera wyliczenia, instrukcje, kroki, przykłady lub elementy porządkowe:
-  - Przerób je na listę punktowaną (- ) lub numerowaną (1., 2., 3.), zależnie od kontekstu.
-  - Każdy punkt listy w osobnym wierszu.
-- Dziel dłuższy tekst na akapity dla lepszej czytelności.
-- Usuwaj powtórzenia wynikające z dyktatu (np. "yyy", "eee", "no no").
-- Zachowaj oryginalne słownictwo użytkownika, nie zmieniaj sensu.
-- Nie dodawaj komentarzy, podsumowań ani pozdrowień.
-- Styl tekstu ma być prosty, klarowny i naturalny.
-
-Cel: przejrzysty, poprawny językowo tekst w formie gotowej do czytania lub publikacji.
+Zasady:
+- Dodawaj ., ?, !, przecinki i myślniki tam, gdzie to naturalne.
+- Zachowaj liczby, skróty (np. "np.", "itp.") i nazwy własne.
+- Łącz w zdania; nie parafrazuj treści.
+- Jeśli masz wątpliwość, preferuj kropkę zamiast przecinka.
 """
+
 DEFAULT_OUTPUT_WAV = "recording.wav"
 
 
@@ -217,7 +212,7 @@ def process_with_gemma(
     user_prompt_text: Optional[str],
     model_id: str = "mlx-community/gemma-3-4b-it-qat-4bit",
     max_tokens: int = 512,
-    temperature: float = 0.7,
+    temperature: float = 0.0,
     verbose: bool = False,
 ) -> str:
     """
@@ -353,7 +348,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--max-tokens", type=int, default=512, help="Max tokens for VLM generation"
     )
     ap.add_argument(
-        "--temperature", type=float, default=0.7, help="Sampling temperature for VLM"
+        "--temperature", type=float, default=0.0, help="Sampling temperature for VLM"
     )
     ap.add_argument("--verbose", action="store_true", help="Verbose logs")
     return ap.parse_args(argv)
