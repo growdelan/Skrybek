@@ -192,6 +192,7 @@ def transcribe_with_mlx_whisper(
     kwargs = {}
     if whisper_model:
         kwargs["path_or_hf_repo"] = whisper_model
+    kwargs["language"] = "pl"
 
     vprint(
         verbose,
@@ -199,10 +200,12 @@ def transcribe_with_mlx_whisper(
     )
     out = mlx_whisper.transcribe(wav_path, **kwargs)
     text = (out.get("text") or "").strip()
+    segments = out.get("segments") or []
     if not text:
         vprint(verbose, "[whisper] empty transcript")
     else:
-        vprint(verbose, f"[whisper] transcript len={len(text)} chars")
+        seg_info = f", segments={len(segments)}" if segments else ""
+        vprint(verbose, f"[whisper] transcript len={len(text)} chars{seg_info}")
     return text
 
 
@@ -269,6 +272,15 @@ def process_with_gemma(
     else:
         text = str(out)
     return text.strip()
+
+
+# --- Heurystyka: maksymalna liczba tokenów ~ długość wejścia ---
+def _safe_max_tokens(transcript: str, base: int = 50) -> int:
+    """
+    Dość konserwatywnie: ~30% znaków + bufor, min. 256.
+    Przybliżenie (token != znak), ale działa praktycznie wystarczająco.
+    """
+    return max(256, int(len(transcript) * 1.3) + base)
 
 
 # --- Schowek ---
@@ -385,7 +397,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             transcript=transcript,
             user_prompt_text=args.prompt,
             model_id=args.vlm_model,
-            max_tokens=args.max_tokens,
+            max_tokens=_safe_max_tokens(transcript),
             temperature=args.temperature,
             verbose=verbose,
         )
