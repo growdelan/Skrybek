@@ -17,15 +17,18 @@ from scipy.io import wavfile
 
 # --- Konfiguracja/placeholder ---
 USER_PROMPT = f"""
-Zadanie: Przywróć interpunkcję oraz wielkie/małe litery w polskim tekście
-z rozpoznawania mowy. NIE ZMIENIAJ SŁÓW ANI ICH KOLEJNOŚCI.
-Nie dodawaj komentarzy. Zwróć tylko sam poprawiony tekst.
+Zadanie: Popraw interpunkcję oraz wielkie/małe litery w polskim tekście po rozpoznawaniu mowy.  
+NIE ZMIENIAJ SŁÓW ANI ICH KOLEJNOŚCI.  
+Nie dodawaj komentarzy. Zwróć tylko sam poprawiony tekst.  
 
-Zasady:
-- Dodawaj ., ?, !, przecinki i myślniki tam, gdzie to naturalne.
-- Zachowaj liczby, skróty (np. "np.", "itp.") i nazwy własne.
-- Łącz w zdania; nie parafrazuj treści.
-- Jeśli masz wątpliwość, preferuj kropkę zamiast przecinka.
+Zasady:  
+- Ignoruj wszystkie istniejące kropki, przecinki i inne znaki interpunkcyjne – potraktuj tekst jakby nie miał żadnej interpunkcji.  
+- Dodaj od nowa poprawne znaki: ., ?, !, przecinki, myślniki tam, gdzie to naturalne według zasad polskiej gramatyki.  
+- Zachowaj liczby, skróty (np. „np.", „itp.") i nazwy własne.  
+- Łącz w zdania; nie parafrazuj treści.  
+- Unikaj bardzo długich zdań. Lepiej użyj kilku krótszych zdań niż jednego z wieloma przecinkami.  
+- Jeśli masz wątpliwość, preferuj kropkę zamiast przecinka.  
+- Dziel każde długie zdanie na 2–3 krótsze. Nie pisz zdań dłuższych niż 15 słów.
 """
 
 DEFAULT_OUTPUT_WAV = "recording.wav"
