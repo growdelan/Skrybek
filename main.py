@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 import argparse
+import re
 import sys
 import time
 import queue
@@ -22,7 +23,6 @@ NIE ZMIENIAJ SŁÓW ANI ICH KOLEJNOŚCI.
 Nie dodawaj komentarzy. Zwróć tylko sam poprawiony tekst.  
 
 Zasady:  
-- Ignoruj wszystkie istniejące kropki, przecinki i inne znaki interpunkcyjne – potraktuj tekst jakby nie miał żadnej interpunkcji.  
 - Dodaj od nowa poprawne znaki: ., ?, !, przecinki, myślniki tam, gdzie to naturalne według zasad polskiej gramatyki.  
 - Zachowaj liczby, skróty (np. „np.", „itp.") i nazwy własne.  
 - Łącz w zdania; nie parafrazuj treści.  
@@ -37,6 +37,11 @@ DEFAULT_OUTPUT_WAV = "recording.wav"
 def vprint(verbose: bool, *args, **kwargs):
     if verbose:
         print(*args, **kwargs, flush=True)
+
+
+def normalize_llm_input(text: str) -> str:
+    lowered = text.lower()
+    return re.sub(r"[^\w\s]", "", lowered, flags=re.UNICODE)
 
 
 # --- Nagrywanie do wykrycia ciszy lub ESC ---
@@ -247,9 +252,8 @@ def process_with_gemma(
             "Przetwórz transkrypcję: streść najważniejsze punkty zwięźle i po polsku."
         )
 
-    prompt = (
-        f"{base_prompt}\n\n---\nTRANSKRYPCJA (kontekst użytkownika):\n{transcript}\n"
-    )
+    normalized_transcript = normalize_llm_input(transcript)
+    prompt = f"{base_prompt}\n\n---\nTRANSKRYPCJA (kontekst użytkownika):\n{normalized_transcript}\n"
 
     formatted = apply_chat_template(processor, config, prompt, num_images=0)
 
