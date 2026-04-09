@@ -246,12 +246,33 @@ def vprint(verbose: bool, *args, **kwargs):
 
 def normalize_final_text(text: str) -> str:
     """Czyści wynik modelu i odrzuca odpowiedzi konwersacyjne."""
-    normalized = CONTROL_TOKEN_RE.sub(" ", text)
+    normalized = CONTROL_TOKEN_RE.sub("", text)
     wrapper_match = TOOL_WRAPPER_RE.match(normalized)
     if wrapper_match:
         normalized = wrapper_match.group(1)
-    normalized = " ".join(normalized.strip().split())
+
+    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
     normalized = normalized.strip("\"' \n\t")
+
+    lines = normalized.split("\n")
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    compact_lines: list[str] = []
+    empty_run = 0
+    for line in lines:
+        stripped_line = line.rstrip()
+        if not stripped_line:
+            empty_run += 1
+            if empty_run <= 2:
+                compact_lines.append("")
+        else:
+            empty_run = 0
+            compact_lines.append(stripped_line)
+
+    normalized = "\n".join(compact_lines)
     if not normalized:
         raise LiteRTProcessingError("Model nie zwrócił finalnego tekstu.")
     if CONVERSATIONAL_PREFIX_RE.match(normalized):
