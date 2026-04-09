@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import numpy as np
 import sounddevice as sd
@@ -52,6 +52,10 @@ TOOL_WRAPPER_RE = re.compile(
 DEFAULT_OUTPUT_WAV = "recording.wav"
 CYAN_PROMPT = "\033[96m"
 ANSI_RESET = "\033[0m"
+DEFAULT_WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
+DEFAULT_PARAKEET_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
+
+_PARAKEET_MODEL_CACHE: dict[str, Any] = {}
 
 
 class LiteRTError(Exception):
@@ -64,6 +68,18 @@ class LiteRTUnavailableError(LiteRTError):
 
 class LiteRTProcessingError(LiteRTError):
     """LiteRT nie zwrócił poprawnego wyniku."""
+
+
+class STTError(Exception):
+    """Bazowy błąd backendu rozpoznawania mowy."""
+
+
+class STTUnavailableError(STTError):
+    """Backend STT lub jego zależności są niedostępne."""
+
+
+class STTProcessingError(STTError):
+    """Backend STT nie zwrócił poprawnego wyniku."""
 
 
 class LiteRTTextProcessor:
@@ -320,7 +336,7 @@ def save_wav_pcm16(
 
 
 # --- Transkrypcja (mlx-whisper) ---
-def transcribe_with_mlx_whisper(
+def transcribe_with_whisper(
     wav_path: str,
     whisper_model: Optional[str] = None,
     verbose: bool = False,
@@ -328,7 +344,12 @@ def transcribe_with_mlx_whisper(
     """
     Używa oficjalnego API: mlx_whisper.transcribe(file, path_or_hf_repo=...) -> dict['text'].
     """
-    import mlx_whisper  # PyPI: mlx-whisper
+    try:
+        import mlx_whisper  # PyPI: mlx-whisper
+    except ImportError as exc:
+        raise STTUnavailableError(
+            "Brak zależności mlx-whisper w środowisku. Zainstaluj projekt ponownie."
+        ) from exc
 
     kwargs = {}
     if whisper_model:
@@ -339,15 +360,97 @@ def transcribe_with_mlx_whisper(
         verbose,
         f"[whisper] transcribing {wav_path} with model={whisper_model or 'default'} …",
     )
-    out = mlx_whisper.transcribe(wav_path, **kwargs)
+    try:
+        out = mlx_whisper.transcribe(wav_path, **kwargs)
+    except Exception as exc:
+        raise STTProcessingError(f"mlx-whisper nie przetworzył pliku audio: {exc}") from exc
     text = (out.get("text") or "").strip()
     segments = out.get("segments") or []
     if not text:
-        vprint(verbose, "[whisper] empty transcript")
-    else:
-        seg_info = f", segments={len(segments)}" if segments else ""
-        vprint(verbose, f"[whisper] transcript len={len(text)} chars{seg_info}")
+        raise STTProcessingError("mlx-whisper zwrócił pustą transkrypcję.")
+
+    seg_info = f", segments={len(segments)}" if segments else ""
+    vprint(verbose, f"[whisper] transcript len={len(text)} chars{seg_info}")
     return text
+
+
+def _load_parakeet_model(model_name: str, verbose: bool = False) -> Any:
+    if model_name in _PARAKEET_MODEL_CACHE:
+        vprint(verbose, f"[parakeet] reusing cached model: {model_name}")
+        return _PARAKEET_MODEL_CACHE[model_name]
+
+    try:
+        from mlx_audio.stt.utils import load
+    except ImportError:
+        try:
+            from mlx_audio.stt import load  # type: ignore[attr-defined]
+        except ImportError as exc:
+            raise STTUnavailableError(
+                "Brak zależności mlx-audio w środowisku. "
+                "Zainstaluj projekt z nowymi zależnościami, aby użyć backendu parakeet."
+            ) from exc
+
+    try:
+        vprint(verbose, f"[parakeet] loading model: {model_name}")
+        model = load(model_name)
+    except Exception as exc:
+        raise STTUnavailableError(
+            f"Nie udało się załadować modelu Parakeet: {exc}"
+        ) from exc
+
+    _PARAKEET_MODEL_CACHE[model_name] = model
+    return model
+
+
+def transcribe_with_parakeet(
+    wav_path: str,
+    parakeet_model: str = DEFAULT_PARAKEET_MODEL,
+    verbose: bool = False,
+) -> str:
+    """
+    Używa mlx-audio do uruchomienia modelu Parakeet w formacie MLX.
+    """
+    model = _load_parakeet_model(parakeet_model, verbose=verbose)
+    vprint(verbose, f"[parakeet] transcribing {wav_path} with model={parakeet_model} …")
+
+    try:
+        result = model.generate(wav_path)
+    except Exception as exc:
+        raise STTProcessingError(f"Parakeet nie przetworzył pliku audio: {exc}") from exc
+
+    text = getattr(result, "text", "")
+    if not isinstance(text, str):
+        text = str(text or "")
+    text = text.strip()
+    if not text:
+        raise STTProcessingError("Parakeet zwrócił pustą transkrypcję.")
+
+    sentence_count = len(getattr(result, "sentences", []) or [])
+    sent_info = f", sentences={sentence_count}" if sentence_count else ""
+    vprint(verbose, f"[parakeet] transcript len={len(text)} chars{sent_info}")
+    return text
+
+
+def transcribe_audio(
+    wav_path: str,
+    stt_backend: str,
+    whisper_model: str,
+    parakeet_model: str,
+    verbose: bool = False,
+) -> str:
+    if stt_backend == "whisper":
+        return transcribe_with_whisper(
+            wav_path,
+            whisper_model=whisper_model,
+            verbose=verbose,
+        )
+    if stt_backend == "parakeet":
+        return transcribe_with_parakeet(
+            wav_path,
+            parakeet_model=parakeet_model,
+            verbose=verbose,
+        )
+    raise STTUnavailableError(f"Nieznany backend STT: {stt_backend}")
 
 
 # --- Schowek ---
@@ -391,7 +494,14 @@ def ask_continue_recording() -> bool:
 # --- CLI / main ---
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
-        description="Record -> Transcribe (mlx-whisper) -> (optional) Process (LiteRT) -> Print + Clipboard"
+        description="Record -> Transcribe (Whisper or Parakeet) -> (optional) Process (LiteRT) -> Print + Clipboard"
+    )
+    ap.add_argument(
+        "--stt-backend",
+        type=str,
+        choices=("whisper", "parakeet"),
+        default="whisper",
+        help="Speech-to-text backend: whisper (mlx-whisper) or parakeet (mlx-audio).",
     )
     ap.add_argument(
         "--use-litert",
@@ -434,8 +544,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     ap.add_argument(
         "--whisper-model",
         type=str,
-        default="mlx-community/whisper-large-v3-turbo",
+        default=DEFAULT_WHISPER_MODEL,
         help="Whisper model id/path for mlx-whisper (e.g., mlx-community/whisper-large-v3-turbo)",
+    )
+    ap.add_argument(
+        "--parakeet-model",
+        type=str,
+        default=DEFAULT_PARAKEET_MODEL,
+        help="Parakeet model id/path for mlx-audio (e.g., mlx-community/parakeet-tdt-0.6b-v3)",
     )
     ap.add_argument("--verbose", action="store_true", help="Verbose logs")
     return ap.parse_args(argv)
@@ -462,10 +578,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         # 2) Save WAV (PCM16)
         save_wav_pcm16(DEFAULT_OUTPUT_WAV, args.rate, audio, verbose=verbose)
 
-        # 3) Transcribe locally (mlx-whisper)
-        transcript = transcribe_with_mlx_whisper(
-            DEFAULT_OUTPUT_WAV, whisper_model=args.whisper_model, verbose=verbose
-        )
+        # 3) Transcribe locally
+        try:
+            transcript = transcribe_audio(
+                DEFAULT_OUTPUT_WAV,
+                stt_backend=args.stt_backend,
+                whisper_model=args.whisper_model,
+                parakeet_model=args.parakeet_model,
+                verbose=verbose,
+            )
+        except STTError as exc:
+            print(f"[stt][ERR] {exc}", file=sys.stderr)
+            return 1
 
         # 4) (Optional) Process text with LiteRT
         if args.use_litert:
