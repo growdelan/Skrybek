@@ -33,13 +33,6 @@ SYSTEM_PROMPT = (
     "Zawsze użyj narzędzia return_final_text."
 )
 
-DEFAULT_USER_PROMPT = (
-    "Przepisz tę wypowiedź dokładnie po polsku. "
-    "Zwróć tylko finalny tekst użytkownika. "
-    "Nie zmieniaj sensu, nie parafrazuj i niczego nie dopisuj. "
-    "Popraw wyłącznie interpunkcję, wielkie litery i oczywistą czytelność zapisu."
-)
-
 CONVERSATIONAL_PREFIX_RE = re.compile(
     r"^\s*(oto|poniżej|jasne|pewnie|oczywiście|transkrypcja|poprawiona transkrypcja)\b",
     re.IGNORECASE,
@@ -83,6 +76,38 @@ class STTProcessingError(STTError):
     """Backend STT nie zwrócił poprawnego wyniku."""
 
 
+def resolve_litert_system_prompt(prompt_input: Optional[str]) -> str:
+    """
+    Rozstrzyga źródło promptu LiteRT:
+    - brak flagi: wbudowany SYSTEM_PROMPT,
+    - istniejący plik: zawartość pliku,
+    - w przeciwnym razie: tekst inline z flagi.
+    """
+    if prompt_input is None:
+        return SYSTEM_PROMPT
+
+    candidate = Path(prompt_input).expanduser()
+    if candidate.exists():
+        if not candidate.is_file():
+            raise LiteRTUnavailableError(
+                f"Ścieżka promptu nie jest plikiem: {candidate}"
+            )
+        try:
+            file_text = candidate.read_text(encoding="utf-8").strip()
+        except Exception as exc:
+            raise LiteRTUnavailableError(
+                f"Nie udało się odczytać pliku promptu: {candidate}"
+            ) from exc
+        if not file_text:
+            raise LiteRTUnavailableError(f"Plik promptu jest pusty: {candidate}")
+        return file_text
+
+    inline_text = prompt_input.strip()
+    if not inline_text:
+        raise LiteRTUnavailableError("Prompt podany flagą --prompt jest pusty.")
+    return inline_text
+
+
 class LiteRTTextProcessor:
     """Minimalny klient LiteRT-LM do korekty transkrypcji tekstowej."""
 
@@ -123,7 +148,7 @@ class LiteRTTextProcessor:
             self._engine.__exit__(None, None, None)
             self._engine = None
 
-    def process_text(self, transcript: str, user_prompt_text: Optional[str]) -> str:
+    def process_text(self, transcript: str, system_prompt_text: str) -> str:
         if not transcript.strip():
             return ""
 
@@ -136,13 +161,11 @@ class LiteRTTextProcessor:
             tool_result["text"] = final_text
             return "OK"
 
-        task_prompt = (user_prompt_text or DEFAULT_USER_PROMPT).strip() or DEFAULT_USER_PROMPT
         content = [
             {
                 "type": "text",
                 "text": (
-                    f"{task_prompt}\n\n"
-                    "TRANSKRYPCJA (nie zmieniaj sensu wypowiedzi):\n"
+                    "TRANSKRYPCJA UŻYTKOWNIKA:\n"
                     f"{transcript}"
                 ),
             }
@@ -150,7 +173,7 @@ class LiteRTTextProcessor:
 
         try:
             with self._engine.create_conversation(
-                messages=[{"role": "system", "content": SYSTEM_PROMPT}],
+                messages=[{"role": "system", "content": system_prompt_text}],
                 tools=[return_final_text],
             ) as conversation:
                 response = conversation.send_message({"role": "user", "content": content})
@@ -171,7 +194,7 @@ class LiteRTTextProcessor:
 def process_text_with_litert_subprocess(
     transcript: str,
     model_path: str,
-    user_prompt_text: Optional[str],
+    prompt_input: Optional[str],
     verbose: bool = False,
 ) -> str:
     """
@@ -185,8 +208,8 @@ def process_text_with_litert_subprocess(
         "--litert-model-path",
         model_path,
     ]
-    if user_prompt_text is not None:
-        cmd.extend(["--prompt", user_prompt_text])
+    if prompt_input is not None:
+        cmd.extend(["--prompt", prompt_input])
     if verbose:
         cmd.append("--verbose")
 
@@ -588,7 +611,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--prompt",
         type=str,
         default=None,
-        help="User prompt for LiteRT post-processing (used only with --use-litert).",
+        help="System prompt override for LiteRT: inline text or path to a prompt file (used only with --use-litert).",
     )
     ap.add_argument(
         "--whisper-model",
@@ -626,11 +649,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         processor: LiteRTTextProcessor | None = None
         try:
+            system_prompt = resolve_litert_system_prompt(args.prompt)
             with contextlib.redirect_stdout(sys.stderr):
                 processor = LiteRTTextProcessor(args.litert_model_path, verbose=verbose)
                 final_text = processor.process_text(
                     transcript=transcript,
-                    user_prompt_text=args.prompt,
+                    system_prompt_text=system_prompt,
                 )
         except LiteRTError as exc:
             print(f"[litert][ERR] {exc}", file=sys.stderr)
@@ -685,7 +709,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 final_text = process_text_with_litert_subprocess(
                     transcript=transcript,
                     model_path=args.litert_model_path,
-                    user_prompt_text=args.prompt,
+                    prompt_input=args.prompt,
                     verbose=verbose,
                 )
             except LiteRTError as exc:

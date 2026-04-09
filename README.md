@@ -5,7 +5,7 @@
 2) automatycznie kończy po `3 s` ciszy lub naciśnięciu **ESC**,
 3) zapisuje `recording.wav` (mono, 16 kHz, PCM16),
 4) transkrybuje lokalnie przez **mlx-whisper** albo **mlx-audio (Parakeet)**,
-5) opcjonalnie poprawia interpunkcję/wielkie litery przez **LiteRT-LM** (np. `gemma-4-E2B-it`),
+5) opcjonalnie przetwarza tekst przez **LiteRT-LM** (np. `gemma-4-E2B-it`) według wybranego promptu,
 6) wypisuje i kopiuje wynik do schowka,
 7) pyta w pętli `Czy nagrać kolejną wiadomość [T/N]:` (kolor cyjan).
 
@@ -17,8 +17,9 @@ Działa lokalnie (po jednorazowym pobraniu modeli).
 - Dwa backendy STT: `whisper` przez `mlx-whisper` i `parakeet` przez `mlx-audio`.
 - Transkrypcja Whisper z wyborem modelu `--whisper-model`.
 - Transkrypcja Parakeet z wyborem modelu `--parakeet-model`.
-- Opcjonalna korekta tekstu przez LiteRT po włączeniu `--use-litert`.
+- Opcjonalne przetwarzanie tekstu przez LiteRT po włączeniu `--use-litert`.
 - Model LiteRT podawany jawnie przez `--litert-model-path`.
+- Nadpisywanie promptu systemowego LiteRT przez `--prompt` (tekst inline lub plik).
 - Schowek: `pyperclip` z fallbackiem `pbcopy`.
 - Po każdym przebiegu pytanie `T/N` o nagranie kolejnej wiadomości.
 
@@ -51,6 +52,12 @@ Przykład użycia modelu lokalnego:
 uv run main.py --use-litert --litert-model-path /pelna/sciezka/do/modelu.litertlm
 ```
 
+## Prompty LiteRT
+- Bez `--prompt` aplikacja używa wbudowanego promptu systemowego (zachowanie jak wcześniej).
+- `--prompt "..."` traktuje wartość jako tekst promptu.
+- `--prompt /sciezka/do/pliku.txt` używa zawartości pliku, jeśli plik istnieje.
+- W repo jest katalog `prompts/` na własne prompty (`.txt` są lokalne i ignorowane przez git).
+
 ## Szybki start
 ```bash
 # 1) Tylko transkrypcja Whisper (bez LiteRT)
@@ -65,15 +72,18 @@ uv run main.py --use-litert --litert-model-path /pelna/sciezka/do/modelu.litertl
 # 4) Transkrypcja Parakeet + korekta przez LiteRT
 uv run main.py --stt-backend parakeet --use-litert --litert-model-path /pelna/sciezka/do/modelu.litertlm
 
-# 5) Jak wyżej, ale z własną instrukcją dla korekty
-uv run main.py --use-litert --litert-model-path /pelna/sciezka/do/modelu.litertlm --prompt "Popraw interpunkcję i wielkie litery, bez zmiany sensu."
+# 5) Tryb notatki przez prompt inline
+uv run main.py --use-litert --litert-model-path /pelna/sciezka/do/modelu.litertlm --prompt "Zamień transkrypcję na krótką, czytelną notatkę po polsku."
+
+# 6) Tryb email przez prompt z pliku
+uv run main.py --use-litert --litert-model-path /pelna/sciezka/do/modelu.litertlm --prompt prompts/email.txt
 ```
 
 ## Użycie (wybrane flagi)
 - `--stt-backend whisper|parakeet` - wybór backendu STT.
 - `--use-litert` - włącza korektę tekstu przez LiteRT.
 - `--litert-model-path /.../model.litertlm` - ścieżka do lokalnego modelu LiteRT (wymagana z `--use-litert`).
-- `--prompt "..."` - dodatkowa instrukcja dla etapu LiteRT.
+- `--prompt "..."` - nadpisanie promptu systemowego LiteRT (tekst inline albo ścieżka do pliku).
 - `--whisper-model ...` - model Whisper używany tylko przez backend `whisper`.
 - `--parakeet-model ...` - model Parakeet używany tylko przez backend `parakeet`.
 - `--silence-threshold 0.01` - próg RMS ciszy.
@@ -85,6 +95,7 @@ uv run main.py --use-litert --litert-model-path /pelna/sciezka/do/modelu.litertl
 
 ## Rozwiązywanie problemów
 - Brak `--litert-model-path` przy `--use-litert` -> aplikacja kończy działanie z kontrolowanym błędem.
+- Pusty prompt (`--prompt ""`) albo pusty plik promptu -> aplikacja kończy działanie z kontrolowanym błędem.
 - Brak `mlx-audio` przy `--stt-backend parakeet` -> doinstaluj zależności projektu i uruchom ponownie.
 - Brak uprawnień mikrofonu -> włącz dostęp dla terminala w ustawieniach systemu.
 - `ffmpeg` nie znaleziony -> `brew install ffmpeg`.
