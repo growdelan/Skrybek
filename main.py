@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import queue
 import re
 import subprocess
@@ -165,6 +166,54 @@ class LiteRTTextProcessor:
             raise LiteRTProcessingError("Model nie zwrócił rozpoznawalnej odpowiedzi.") from exc
 
         return normalize_final_text(fallback)
+
+
+def process_text_with_litert_subprocess(
+    transcript: str,
+    model_path: str,
+    user_prompt_text: Optional[str],
+    verbose: bool = False,
+) -> str:
+    """
+    Uruchamia LiteRT w osobnym procesie, aby uniknąć konfliktów runtime/GPU
+    z innymi backendami STT działającymi w tym samym interpreterze.
+    """
+    cmd = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--_litert-subprocess",
+        "--litert-model-path",
+        model_path,
+    ]
+    if user_prompt_text is not None:
+        cmd.extend(["--prompt", user_prompt_text])
+    if verbose:
+        cmd.append("--verbose")
+
+    try:
+        completed = subprocess.run(
+            cmd,
+            input=transcript,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except Exception as exc:
+        raise LiteRTUnavailableError(
+            f"Nie udało się uruchomić procesu LiteRT: {exc}"
+        ) from exc
+
+    if completed.returncode != 0:
+        stderr = (completed.stderr or "").strip()
+        stdout = (completed.stdout or "").strip()
+        details = stderr or stdout or "LiteRT helper zakończył się błędem."
+        raise LiteRTProcessingError(details)
+
+    output = completed.stdout.strip()
+    if not output:
+        raise LiteRTProcessingError("LiteRT helper nie zwrócił tekstu.")
+    vprint(verbose, "[litert] processed in subprocess")
+    return output
 
 
 def vprint(verbose: bool, *args, **kwargs):
@@ -553,6 +602,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default=DEFAULT_PARAKEET_MODEL,
         help="Parakeet model id/path for mlx-audio (e.g., mlx-community/parakeet-tdt-0.6b-v3)",
     )
+    ap.add_argument(
+        "--_litert-subprocess",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     ap.add_argument("--verbose", action="store_true", help="Verbose logs")
     return ap.parse_args(argv)
 
@@ -560,6 +614,33 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     verbose = args.verbose
+
+    if args._litert_subprocess:
+        transcript = sys.stdin.read()
+        if not args.litert_model_path:
+            print(
+                "[litert][ERR] Brak --litert-model-path. Podaj ścieżkę do lokalnego pliku .litertlm.",
+                file=sys.stderr,
+            )
+            return 2
+
+        processor: LiteRTTextProcessor | None = None
+        try:
+            with contextlib.redirect_stdout(sys.stderr):
+                processor = LiteRTTextProcessor(args.litert_model_path, verbose=verbose)
+                final_text = processor.process_text(
+                    transcript=transcript,
+                    user_prompt_text=args.prompt,
+                )
+        except LiteRTError as exc:
+            print(f"[litert][ERR] {exc}", file=sys.stderr)
+            return 1
+        finally:
+            if processor is not None:
+                processor.close()
+
+        print(final_text)
+        return 0
 
     while True:
         # 1) Record
@@ -600,19 +681,16 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
                 return 2
 
-            processor: LiteRTTextProcessor | None = None
             try:
-                processor = LiteRTTextProcessor(args.litert_model_path, verbose=verbose)
-                final_text = processor.process_text(
+                final_text = process_text_with_litert_subprocess(
                     transcript=transcript,
+                    model_path=args.litert_model_path,
                     user_prompt_text=args.prompt,
+                    verbose=verbose,
                 )
             except LiteRTError as exc:
                 print(f"[litert][ERR] {exc}", file=sys.stderr)
                 return 1
-            finally:
-                if processor is not None:
-                    processor.close()
         else:
             vprint(verbose, "[litert] skipped (use --use-litert to enable post-processing)")
             final_text = transcript
