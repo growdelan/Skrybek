@@ -1,7 +1,7 @@
 [project]
 name = "skrybek"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.4.0"
+description = "Lokalne dyktowanie i edycja transkrypcji na macOS"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -10,6 +10,8 @@ dependencies = [
     "mlx-whisper>=0.4.2",
     "numpy>=2.2.6",
     "pyperclip>=1.9.0",
+    "pyobjc-framework-AVFoundation>=12.1; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=12.1; sys_platform == 'darwin'",
     "scipy>=1.16.1",
     "sounddevice>=0.5.2",
 ]

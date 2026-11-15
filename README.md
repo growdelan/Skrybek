@@ -1,6 +1,28 @@
-# Skrybek — lokalne nagrywanie -> transkrypcja (Whisper lub Parakeet) -> (opcjonalnie) korekta tekstu przez LiteRT (Gemma4 E2B)
+# Skrybek
 
-**Skrybek** to prosty, jednoplikowy workflow w Pythonie (`main.py`) dla macOS (Apple Silicon):
+Skrybek to aplikacja do lokalnego dyktowania i edycji transkrypcji na macOS z Apple Silicon. Po pobraniu modeli rozpoznawanie mowy i korekta tekstu działają lokalnie.
+
+## Aplikacja w Spotlight
+
+Z katalogu projektu uruchom:
+
+```sh
+uv sync --frozen
+uv run --frozen python scripts/install_spotlight.py
+```
+
+Instalator wymaga narzędzi wiersza poleceń Xcode (`xcode-select --install`). Zapisuje `~/Applications/Skrybek.app` i rejestruje go w macOS. Wyszukaj **Skrybek** w Spotlight albo otwórz aplikację w Finderze. Po przeniesieniu projektu lub przebudowie środowiska Pythona uruchom instalator ponownie. Do pracy nad interfejsem można też użyć `uv run --frozen python desktop.py`.
+
+1. Wybierz **Whisper** albo **Parakeet**.
+2. Włącz **Korekta LiteRT**, jeśli chcesz, żeby model poprawiał transkrypcję po nagraniu. W **Ustawieniach** wybierz lokalny plik `.litertlm`. Możesz tam zmienić modele rozpoznawania mowy i ustawić własny prompt.
+3. Kliknij **Rozpocznij nagranie** lub naciśnij **⌘Enter**. Przy pierwszym użyciu macOS poprosi o dostęp do mikrofonu. Nagranie zakończy się po 3 sekundach ciszy po wypowiedzi. Możesz je też zakończyć przyciskiem, **Esc** lub **⌘Enter**.
+4. Edytuj wynik w oknie. **Popraw tekst** uruchamia włączoną korektę na aktualnej treści edytora, a **Kopiuj tekst** kopiuje ją do schowka. Gdy korekta po nagraniu się nie powiedzie, w edytorze pojawi się transkrypcja.
+
+Nagranie w aplikacji okienkowej jest przetwarzane z pliku tymczasowego. Wybrany backend, stan korekty, modele i prompt są zapamiętywane.
+
+## Tryb terminalowy
+
+`main.py` obsługuje dotychczasowy tryb CLI:
 1) nagrywa dźwięk z mikrofonu,
 2) automatycznie kończy po `3 s` ciszy lub naciśnięciu **ESC**,
 3) zapisuje `recording.wav` (mono, 16 kHz, PCM16),

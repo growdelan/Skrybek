@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from threading import Event
 from typing import Any, List, Optional
 
 import numpy as np
@@ -293,17 +294,15 @@ def record_until_silence(
     silence_seconds: float = 3.0,
     device: Optional[int | str] = None,
     verbose: bool = False,
+    *,
+    stop_event: Event | None = None,
 ) -> np.ndarray:
     """
     Nagrywa mono float32 [-1, 1] do czasu:
       - wykrycia ciągłej ciszy przez silence_seconds (RMS < silence_threshold) LUB
-      - naciśnięcia klawisza ESC w terminalu (tty).
+      - naciśnięcia klawisza ESC w terminalu (tty),
+      - ustawienia stop_event, jeśli nagrywaniem steruje okno.
     """
-    sd.default.samplerate = rate
-    sd.default.channels = 1
-    if device is not None:
-        sd.default.device = device
-
     blocksize = max(512, int(rate * 0.064))  # ~64 ms
     audio_q: "queue.Queue[np.ndarray]" = queue.Queue()
     collected: List[np.ndarray] = []
@@ -317,7 +316,7 @@ def record_until_silence(
         audio_q.put(indata.copy())
 
     # Przygotuj nieblokujący odczyt klawiatury (tylko POSIX + TTY)
-    use_kb = sys.stdin.isatty()
+    use_kb = stop_event is None and sys.stdin.isatty()
     kb_fd = None
     kb_state = None
     if use_kb:
@@ -341,9 +340,15 @@ def record_until_silence(
     try:
         import select  # POSIX
 
-        with sd.InputStream(callback=callback, blocksize=blocksize, dtype="float32"):
+        with sd.InputStream(
+            callback=callback, blocksize=blocksize, dtype="float32",
+            samplerate=rate, channels=1, device=device,
+        ):
             last_print = time.time()
             while True:
+                if stop_event is not None and stop_event.is_set():
+                    break
+
                 # 0) Sprawdź klawisz ESC (nieblokująco)
                 if use_kb:
                     try:
@@ -394,6 +399,8 @@ def record_until_silence(
     except KeyboardInterrupt:
         vprint(verbose, "[rec] Interrupted by user (Ctrl+C) -> stopping")
     except Exception as e:
+        if stop_event is not None:
+            raise
         print(f"[rec][ERR] {e}", file=sys.stderr)
         sys.exit(1)
     finally:
